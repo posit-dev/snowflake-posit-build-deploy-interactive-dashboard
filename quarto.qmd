@@ -1,0 +1,219 @@
+---
+title: "Analyze HMDA Mortgage Data with Snowflake Cortex AI and Positron Assistant"
+format: html
+editor_options:
+  chunk_output_type: console
+execute:
+  echo: false
+  warning: false
+  error: false
+---
+
+The Snowflake guide this document accompanies:
+
+- Uses the Home Mortgage Disclosure Act (HMDA) dataset from Snowflake's free public data
+- Leverages Cortex AI with Databot and Positron Assistant for exploratory data analysis in Posit Workbench
+- Builds an interactive Shiny dashboard with traditional UI controls
+- Deploys to Posit Connect for easy and secure sharing and collaboration
+
+## Install packages
+
+```{r}
+install.packages("renv")
+```
+
+```{r}
+renv::restore()
+```
+
+## Connect to data
+
+```{r}
+library(DBI)
+library(odbc)
+library(dplyr)
+library(dbplyr)
+library(connectcreds)
+
+get_connection <- function() {
+  warehouse <- "DEFAULT_WH"
+  database <- "SNOWFLAKE_PUBLIC_DATA_FREE"
+  schema <- "PUBLIC_DATA_FREE"
+  account <- Sys.getenv("SNOWFLAKE_ACCOUNT")
+
+  con <- DBI::dbConnect(
+    odbc::snowflake(),
+    account = account,
+    warehouse = warehouse,
+    database = database,
+    schema = schema
+  )
+
+con <- get_connection()
+mortgage_data <- tbl(con, "HOME_MORTGAGE_DISCLOSURE_ATTRIBUTES")
+message("Successfully established secure connection to Snowflake!")
+}
+```
+
+## Exploratory data analysis with Databot
+
+Let's step out of our Quarto document and open Databot to explore our mortgage data. Come back when you're ready to build the dashboard.
+
+## Build Interactive Dashboard
+
+### Build a Shiny app
+
+```{r}
+# Create app.R file with Shiny application code
+app_code <- '
+library(shiny)
+library(DBI)
+library(odbc)
+library(dplyr)
+library(dbplyr)
+library(connectcreds)
+library(ggplot2)
+library(scales)
+
+get_connection <- function() {
+  warehouse <- "DEFAULT_WH"
+  database <- "SNOWFLAKE_PUBLIC_DATA_FREE"
+  schema <- "PUBLIC_DATA_FREE"
+  account <- Sys.getenv("SNOWFLAKE_ACCOUNT")
+
+  con <- DBI::dbConnect(
+    odbc::snowflake(),
+    account = account,
+    warehouse = warehouse,
+    database = database,
+    schema = schema
+  )
+
+  return(con)
+}
+
+# Define UI
+ui <- fluidPage(
+  titlePanel("HMDA Mortgage Data Explorer"),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("loan_type", "Select Loan Type:",
+                  choices = c("All", "Conventional", "FHA", "VA", "FSA/RHS")),
+      selectInput("state", "Select State:",
+                  choices = c("All", "California", "Texas", "Florida", "New York", "Pennsylvania")),
+      sliderInput("loan_amount", "Loan Amount Range:",
+                  min = 0, max = 1000000, value = c(0, 500000),
+                  step = 50000)
+    ),
+    mainPanel(
+      h4("Loan Distribution:"),
+      plotOutput("loan_plot"),
+      h4("Key Metrics:"),
+      verbatimTextOutput("key_metrics"),
+      h4("Year Trends:"),
+      plotOutput("year_plot")
+    )
+  )
+)
+
+# Define server
+server <- function(input, output, session) {
+  # Initialize connection
+  con <- get_connection()
+  mortgage_data <- tbl(con, "HOME_MORTGAGE_DISCLOSURE_ATTRIBUTES")
+
+  # Close connection when session ends
+  onStop(function() {
+    dbDisconnect(con)
+  })
+
+  # Reactive filtered data
+  filtered_data <- reactive({
+    # Extract slider values into local variables before using in filter
+    min_amount <- input$loan_amount[1]
+    max_amount <- input$loan_amount[2]
+
+    data <- mortgage_data %>%
+      filter(LOAN_AMOUNT >= min_amount,
+             LOAN_AMOUNT <= max_amount)
+
+    if (input$loan_type != "All") {
+      data <- data %>% filter(LOAN_TYPE == input$loan_type)
+    }
+
+    if (input$state != "All") {
+      data <- data %>% filter(STATE_NAME == input$state)
+    }
+
+    # Limit to 10,000 rows for performance
+    result <- data %>%
+      head(10000) %>%
+      collect()
+
+    result
+  })
+
+  output$loan_plot <- renderPlot({
+    data <- filtered_data()
+
+    if (nrow(data) == 0) {
+      plot.new()
+      text(0.5, 0.5, "No data available for the selected filters", cex = 1.5)
+    } else {
+      ggplot(data, aes(x = LOAN_AMOUNT)) +
+        geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+        scale_x_continuous(labels = label_dollar(scale_cut = cut_short_scale())) +
+        theme_minimal() +
+        labs(title = paste("Distribution of Loan Amounts (", nrow(data), "loans)"),
+             x = "Loan Amount",
+             y = "Count")
+    }
+  })
+
+  output$key_metrics <- renderPrint({
+    data <- filtered_data()
+    if (nrow(data) == 0) {
+      cat("No data available for the selected filters")
+    } else {
+      total_loans <- nrow(data)
+      avg_loan <- mean(data$LOAN_AMOUNT, na.rm = TRUE)
+      total_volume <- sum(data$LOAN_AMOUNT, na.rm = TRUE)
+
+      cat(sprintf("Total Loans: %s\\n", format(total_loans, big.mark = ",")))
+      cat(sprintf("Average Loan Amount: %s\\n", dollar(avg_loan)))
+      cat(sprintf("Total Loan Volume: %s\\n", dollar(total_volume)))
+    }
+  })
+
+  output$year_plot <- renderPlot({
+    data <- filtered_data()
+
+    if (nrow(data) == 0) {
+      plot.new()
+      text(0.5, 0.5, "No data available for the selected filters", cex = 1.5)
+    } else {
+      year_summary <- data %>%
+        group_by(YEAR) %>%
+        summarise(count = n(), .groups = "drop")
+
+      ggplot(year_summary, aes(x = factor(YEAR), y = count)) +
+        geom_col(fill = "steelblue") +
+        theme_minimal() +
+        labs(title = "Loan Count by Year",
+             x = "Year",
+             y = "Number of Loans") +
+        scale_y_continuous(labels = label_comma())
+    }
+  })
+}
+
+# Run the application
+shinyApp(ui = ui, server = server)
+'
+
+# Write the app code to app.R file
+writeLines(app_code, "app.R")
+
+message("Shiny app created successfully!")
+message("\nRun the app with: shiny::runApp(\"app.R\")")
+```
