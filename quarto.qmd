@@ -23,6 +23,7 @@ install.packages("renv")
 ```
 
 ```{r}
+renv::activate()
 renv::restore()
 ```
 
