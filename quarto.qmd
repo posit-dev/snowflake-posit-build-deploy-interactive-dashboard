@@ -22,8 +22,15 @@ The Snowflake guide this document accompanies:
 install.packages("renv")
 ```
 
+Activate the renv environment for this project:
+
 ```{r}
 renv::activate()
+```
+
+Restore all required packages from the lockfile:
+
+```{r}
 renv::restore()
 ```
 
