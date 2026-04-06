@@ -57,10 +57,12 @@ get_connection <- function() {
     schema = schema
   )
 
+  return(con)
+}
+
 con <- get_connection()
 mortgage_data <- tbl(con, "HOME_MORTGAGE_DISCLOSURE_ATTRIBUTES")
 message("Successfully established secure connection to Snowflake!")
-}
 ```
 
 ## Exploratory data analysis with Databot
